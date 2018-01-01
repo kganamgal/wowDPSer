@@ -1,85 +1,613 @@
 ------------------------------------------------------------
 -- DPSerTaFeng.lua
---
--- 
---
 -- Edwin
--- 2017-01-29 添加：天赋检测功能
--- 2017-01-30 添加：技能插队功能
--- 2017-01-30 优化：策略函数，用return代替break，并将打断移至技能插队函数中
--- 2017-01-30 重大调整：用一套按键精灵，不同策略在插件内部切换
--- 2017-01-31 添加：非战斗不启动
--- 2017-02-03 移除：非战斗不启动
--- 2017-02-03 添加：攒气循环、泄气循环
--- 2017-02-04 优化：风火雷电卡怒雷破cd放
--- 2017-02-12 调整：输出改为实际快捷键
 ------------------------------------------------------------
+local displayFrame = CreateFrame("Button", "TaFeng", UIParent)                  		   -- 定义一个Button
 
-local UnitExists = UnitExists                                                     -- 声明各关键词
-local UnitIsUnit = UnitIsUnit
-local GetUnitSpeed = GetUnitSpeed
-local GetPlayerFacing = GetPlayerFacing
-local GetUnitPitch = GetUnitPitch
-local GetPlayerMapPosition = GetPlayerMapPosition
-local format = format
-local TOOLTIP_UPDATE_TIME = TOOLTIP_UPDATE_TIME
-local Lock_MengHuZhang = 0
-local Lock_HuanMieTi = 0
-local Lock_ShenHeYinXiangTi = 0
-local Lock_SuiYuShanDian = 0
-local Index_Strategy = 1					--策略index默认为1
+-- ----------------------------------声明----------------------------------
+local Cnt = ''
+local NOW0 = GetTime()
+NOW0 = nil
+local last_spellname
+local CT = 0.2				-- 开始放技能的时间
+local count_SHYXT = 0		-- 神鹤印记层数
+local Index_Strategy = 1	-- 默认策略
+local sighedSHYXT = {}		-- 被标记了神鹤引项踢Debuff的怪物列表
+local spellSpend = {}		-- 技能消耗
+local spellInsert = {		-- InsertSpell 插队技能
+	['碧玉疾风']			= false,
+	['神鹤引项踢']			= false,
+	['扫堂腿']				= false,
+}
+local tsid = {				-- TableSpell 技能id字典
+	['旭日东升踢'] 			= 107428,
+	['猛虎掌'] 				= 100780,
+	['幻灭踢'] 				= 100784,
+	['幻灭踢!']				= 116768,
+	['切喉手']				= 116705,
+	['神鹤引项踢'] 			= 101546,
+	['神鹤印记'] 			= 228287,
+	['风领主之击'] 			= 205320,
+	['怒雷破']			 	= 113656,
+	['真气波']	 			= 115098,
+	['升龙霸']	 			= 152175,
+	['豪能酒'] 				= 115288,
+	['翔龙在天']	 		= 101545,
+	['扫堂腿']	 			= 119381,
+	['轮回之触'] 			= 115080,
+	['风火雷电'] 			= 137639,
+	['白虎下凡'] 			= 123904,
+	['碧玉疾风'] 			= 116847,
+	['屏气凝神'] 			= 152173,
+	['点穴踢'] 				= 247255,
+	['连击'] 				= 196741,
+	['电容'] 				= 235054,
+	['转化力量']			= 195321,
+	['碎玉闪电']			= 117952,
+	['公共'] 				= 100780,
+}
+local eqid = {				-- EquipmentId 装备id字典
+	['电容胸'] 				= 144239,
+	['怒雷鞋']              = 137029,
+	['凤击头']				= 151811,
+}
+local tlarg = {				-- TalentArguments 天赋参数字典
+	['猛虎之眼']			= {1, 2},
+	['真气波'] 				= {1, 3},
+	['豪能酒'] 				= {3, 1},
+	['平心之环'] 			= {4, 1},
+	['玄牛雕像'] 			= {4, 2},
+	['扫堂腿'] 				= {4, 3},
+	['碧玉疾风'] 			= {6, 1},
+	['白虎下凡'] 			= {6, 2},
+	['连击'] 				= {6, 3},
+	['真气流转'] 			= {7, 1},
+	['升龙霸'] 				= {7, 2},
+	['屏气凝神'] 			= {7, 3},
+}
+local skey = {				-- SpellKey 技能快捷键字典
+	['猛虎掌']				= '1',
+	['旭日东升踢']			= '2',
+	['幻灭踢']				= '3',
+	['豪能酒']				= '4',
+	['切喉手']				= '5',
+	['轮回之触']			= '6',
+	['风领主之击']			= '7',
+	['升龙霸'] 				= '8',
+	['怒雷破'] 				= '9',
+	['真气波'] 				= '0',
+	['风火雷电'] 			= 'Y',
+	['神鹤引项踢'] 			= 'G',
+	['碧玉疾风'] 			= 'H',
+	['碎玉闪电'] 			= 'J',
+	['扫堂腿'] 				= 'E',
+	['真气突'] 				= 'Q',
+	['翔龙在天'] 			= 'R',
+}
+local locker = {			-- LockSpell 技能锁
+	['猛虎掌']				= false,
+	['幻灭踢']				= false,
+	['神鹤引项踢']			= false,
+}
+local MinGanXiShu = 1.1
+local lastCastTime = {		-- 某技能距上次释放间隔多久
+	-- ['旭日东升踢'] 		= {GetTime(), 10/(1+(GetHaste() or 0)/100)},
+	['怒雷破'] 			= {GetTime(), 24/(1+(GetHaste() or 0)/100)},
+	['升龙霸'] 			= {GetTime(), 24/(1+(GetHaste() or 0)/100)},
+	['风领主之击'] 		= {GetTime(), 32},
+	['豪能酒']	 		= {GetTime(), 60},
+}
 
-local Cnt, SpellingStart
-local updateElapsed = 0                                                           -- 将计时器归零
+-- --------------------------------基本转换--------------------------------
+local function TransferName(SpellName)
+	--[[
+		SpellName
+		input:    技能名称
+		return:   该技能游戏中的名称
+	  ]]
+	local name, rank, icon, castTime, minRange, maxRange = GetSpellInfo(tsid[SpellName])
+	return name
+end
 
---local function NormalizeSpeed(speed)                                              -- 将系统速度换算为正常行走速度的倍数
---	return floor(speed * 100 / 7 + 0.5)
---end
+local function Cast(SpellName)
+	--[[
+		CastSpell
+		input:    技能名称
+		return:   nil
+		将该技能的快捷键和名称附到Cnt后面
+	  ]]
+	Cnt = Cnt..skey[SpellName]..'  '..TransferName(SpellName)
+end
 
---local function NormalizeFacing(Facing)                                              -- 将系统朝向换算为角度
---	return floor(360 - Facing * 180 / 3.1415926)
---end
+local function argsToString(arg, ...)
+    if select("#", ...) > 0 then
+        return tostring(arg), argsToString(...)
+    else
+        return tostring(arg)
+    end
+end
+local function print(...)
+    local output = strjoin(", ", argsToString(...))
+    ChatFrame1:AddMessage(output)
+    ChatFrame4:AddMessage(output)
+end
 
---local function NormalizePitch(Pitch)                                              -- 将系统仰角换算为角度
---	return floor(-1 * Pitch * 180 / 3.1415926)
---end
+-- --------------------------------状态监测--------------------------------
+local function CD(SpellName)
+	--[[
+		CoolDown
+		input:    技能中文名称
+		return:   该技能尚余冷却时间
+	  ]]
+	local start, duration, enabled = GetSpellCooldown(tsid[SpellName])
+	if enabled == 0 then    -- 如濳行，处于潜行状态时不触发CD，这时视CD为无穷大
+		return 10000
+	elseif ( start > 0 and duration > 0) then
+		return start + duration - GetTime()
+	else
+		return 0
+	end
+end
 
---local function NormalizePos(po)                                              -- 将系统仰角换算为角度
---	return floor(po * 100000)
---end
+local function Buff(SpellName, UnitName)
+	--[[
+		input:    技能中文名称，监测的对象
+		return:   玩家身上该技能的剩余时间，不存在则返回0
+	  ]]
+	UnitName = UnitName or 'player'
+	local name, rank, icon, count, debuffType,
+	      duration, expirationTime, unitCaster,
+	      isStealable, shouldConsolidate,
+	      spellId = UnitBuff(UnitName, TransferName(SpellName))
+	if name then
+		local leftTime = expirationTime - GetTime()
+		if leftTime < 0 then
+			return 1000
+		else
+			return leftTime
+		end
+	else
+		return 0
+	end
+end
 
-local frame = CreateFrame("Button", "TaFeng", UIParent)                  -- 定义一个框体frame
-frame:SetWidth(16)                                                                 -- 定义frame的宽
-frame:SetHeight(16)                                                                -- 定义frame的高
-frame:SetPoint("CENTER", 0, 120)                                                   -- 定义frame的中心位置
-frame:SetMovable(true)                                                             -- 将frame设为可移动
-frame:SetUserPlaced(true)                                                          -- 将frame设为可自定义位置
-frame:SetClampedToScreen(true)                                                     -- 允许将该frame拖出屏幕(or not?)
-frame:SetHighlightTexture("Interface\\Buttons\\ButtonHilight-Square", "ADD")       -- 设置frame的纹理
-frame:SetBackdropBorderColor(100, 100, 100)
+local function BuffCount(SpellName, UnitName)
+	--[[
+		input:    技能中文名称，监测的对象
+		return:   玩家身上该技能的叠加层数，不存在则返回0
+	  ]]
+	UnitName = UnitName or 'player'
+	local name, rank, icon, count, debuffType,
+	      duration, expirationTime, unitCaster,
+	      isStealable, shouldConsolidate,
+	      spellId = UnitBuff(UnitName, TransferName(SpellName))
+	if name then
+		return count
+	else
+		return 0
+	end
+end
 
-frame.icon = frame:CreateTexture(frame:GetName().."Icon", "ARTWORK")               -- 设置frame的图标
-frame.icon:SetAllPoints(frame)
-frame.icon:SetTexture("Interface\\Icons\\Ability_Druid_SkinTeeth")
+local function DeBuff(SpellName, UnitName)
+	--[[
+		input:    技能中文名称，监测的对象
+		return:   目标身上该技能的剩余时间，不存在则返回0
+	  ]]
+	UnitName = UnitName or 'target'
+	local name, rank, icon, count, debuffType,
+	      duration, expirationTime, unitCaster,
+	      isStealable, shouldConsolidate,
+	      spellId = UnitDebuff(UnitName, TransferName(SpellName))
+	if name and unitCaster == 'player' then
+		local leftTime = expirationTime - GetTime()
+		if leftTime < 0 then
+			return 1000
+		else
+			return leftTime
+		end
+	else
+		return 0
+	end
+end
 
-frame.text = frame:CreateFontString(frame:GetName().."Text", "ARTWORK", "GameFontHighlightLeft")
-                                                                                   -- 为frame创建一个新的Fontstring目标
-frame.text:SetPoint("LEFT", frame, "RIGHT", 2, 0)
-frame.text:SetFont(STANDARD_TEXT_FONT, 30)
+local function DeBuffCount(SpellName, UnitName)
+	--[[
+		input:    技能中文名称，监测的对象
+		return:   玩家身上该技能的叠加层数，不存在则返回0
+	  ]]
+	UnitName = UnitName or 'target'
+	local name, rank, icon, count, debuffType,
+	      duration, expirationTime, unitCaster,
+	      isStealable, shouldConsolidate,
+	      spellId = UnitDebuff(UnitName, TransferName(SpellName))
+	if name and unitCaster == 'player' then
+		return count
+	else
+		return 0
+	end
+end
 
-frame:RegisterForDrag("LeftButton")                                                -- 左键可拖动该frame的位置
-frame:SetScript("OnDragStart", frame.StartMoving)
-frame:SetScript("OnDragStop", frame.StopMovingOrSizing)
+local function Equip(EquipmentName)
+	--[[
+		input:    装备中文简称
+		return:   true(该装备穿在身上) / nil(该装备未穿在身上)
+	  ]]
+	return IsEquippedItem(eqid[EquipmentName])
+end
 
-frame:RegisterEvent("COMBAT_LOG_EVENT_UNFILTERED")                       -- 设定该frame关注的事件：战斗信息
-frame:RegisterEvent("CHAT_MSG_WHISPER")												-- 设定该frame关注的事件：聊天记录
+local function Talent(TalentName)
+	--[[
+		input:    天赋名称
+		return:   true(该点赋已点) / nil(该天赋未点)
+	  ]]
+	local deep, left = tlarg[TalentName][1], tlarg[TalentName][2]
+	return select(4, GetTalentInfo(deep, left, 1))
+end
 
---  ------------------------监测---------------------------------
-frame:SetScript("OnEvent", function(self, event, timestamp, eventType, _, sourceGUID, sourceName, sourceFlags, sourceRaidFlags, destGUID, destName, destFlags, _, spellID, spellName, _, extraskillID, extraSkillName)
-	if event == "CHAT_MSG_WHISPER" then
-		--DEFAULT_CHAT_FRAME:AddMessage(ChatMessage)
-		ChatMessage = timestamp
-		Author = eventType
+local function RangeIn(UnitName)
+	--[[
+		input:    监测目标
+		return:   true(该目标位于10码内) / nil(该目标位于10码外)
+	  ]]
+	UnitName = UnitName or 'target'
+	return CheckInteractDistance(UnitName, 3)
+end
+
+local function HP(UnitName)
+	UnitName = UnitName or 'target'
+	return UnitHealth(UnitName)
+end
+local function HPMax(UnitName)
+	UnitName = UnitName or 'target'
+	return UnitHealthMax(UnitName)
+end
+local function HPP(UnitName)
+	UnitName = UnitName or 'target'
+	local HitPoint_Max = UnitHealthMax(UnitName)
+	if HitPoint_Max == 0 then
+		return 0
+	else
+		return UnitHealth(UnitName) / HitPoint_Max
+	end
+end
+
+local function MP(UnitName)
+	UnitName = UnitName or 'player'
+	return UnitMana(UnitName)
+end
+local function MPMax(UnitName)
+	UnitName = UnitName or 'player'
+	return UnitManaMax(UnitName)
+end
+local function MPP(UnitName)
+	UnitName = UnitName or 'player'
+	local ManaPoint_Max = UnitManaMax(UnitName)
+	if ManaPoint_Max == 0 then
+		return 0
+	else
+		return UnitMana(UnitName) / ManaPoint_Max
+	end
+end
+
+local function EnG(UnitName)
+	UnitName = UnitName or 'player'
+	return UnitPower(UnitName, 3)
+end
+local function EnGMax(UnitName)
+	UnitName = UnitName or 'player'
+	return UnitPowerMax(UnitName, 3)
+end
+local function EnGP(UnitName)
+	UnitName = UnitName or 'player'
+	local Energy_Max = UnitPowerMax(UnitName, 3)
+	if Energy_Max == 0 then
+		return 0
+	else
+		return UnitPower(UnitName, 3) / Energy_Max
+	end
+end
+
+local function Power(UnitName)
+	UnitName = UnitName or 'player'
+	return UnitPower(UnitName, 12)
+end
+local function PowerMax(UnitName)
+	UnitName = UnitName or 'player'
+	return UnitPowerMax(UnitName, 12)
+end
+
+local function CountSHYXT()
+	--[[
+		return:   去除超时的成员后，统计神鹤引项踢的层数
+	  ]]
+	local k, v, n, t
+	t = GetTime()
+	n = 0
+	for k, v in pairs(sighedSHYXT) do
+		if t - v > 15 then
+			sighedSHYXT[k] = nil
+		else
+			n = n + 1
+		end
+	end
+	return n
+end
+
+------------------------------技能锁-------------------------------
+local function LockSpell(SpellName)
+	--[[
+		input:    技能名称
+		return:   nil
+		将该技能上锁，同时解锁其他所有技能
+	  ]]
+	local k
+	for k, _ in pairs(locker) do
+		locker[k] = false
+	end
+	locker[SpellName] = true
+end
+
+local function UnlockSpell()
+	--[[
+		return:   nil
+		解锁所有技能
+	  ]]
+	local k
+	for k, _ in pairs(locker) do
+		locker[k] = false
+	end
+end
+
+------------------------------技能插队-------------------------------
+function ClearSpellList()		--清除插队队列
+	--[[
+		return:   nil
+		清楚所有插队队列
+	  ]]
+	local k
+	for k, _ in pairs(spellInsert) do
+		spellInsert[k] = false
+	end
+end
+
+function InsertSpellList()		--添加插队队列
+	--打断
+	--如果按下Ctrl并且检测到相关技能施放，正读条
+	if IsCtrl and not IsAlt and not IsShift then
+		IfCasting, _, CastingIcon, _, _, _, _, _, InterruptAble = UnitCastingInfo('target')		
+		if IfCasting and (not InterruptAble) then
+			-- 如果目标正在施法，就打断之
+			Cnt = "P "
+			Cast('切喉手')
+			return
+		end
+	end
+	--如果按下Shift并且检测到相关技能施放，倒读条
+	if IsShift and not IsAlt and not IsCtrl then
+		IfCasting, _, CastingIcon, _, _, _, _, _, InterruptAble = UnitChannelInfo('target')
+		if IfCasting and (not InterruptAble) then
+			-- 如果目标正在引导通道法术，就打断之
+			Cnt = "P "
+			Cast('切喉手')
+			return
+		end
+	end
+	--第一时间取消翔龙在天
+	if select(2, GetActionInfo(72)) == 115057 then
+		Cnt = "P "
+		Cast('翔龙在天')
+		return
+	end
+	--碧玉疾风
+	if not Talent('碧玉疾风') then		--没点碧玉疾风天赋就忽略之
+		spellInsert['碧玉疾风'] = false
+	end
+	if spellInsert['碧玉疾风'] and CD('碧玉疾风') <= CT and Power() >= 1 then
+		Cnt = "P "
+		Cast('碧玉疾风')
+		return
+	elseif spellInsert['碧玉疾风'] and CD('碧玉疾风') <= CT and Power() < 1 then
+		Cnt = "P "
+		Cast('猛虎掌')
+		return
+	end
+	--神鹤引项踢
+	if spellInsert['神鹤引项踢'] then
+		--真气<=1，且能量不满，且豪能酒CD，使用豪能酒
+		if Power() <= 1 and EnG() < EnGMax() and CD('豪能酒') <= CT then
+			Cnt = "P "
+			Cast('豪能酒')
+			return
+		end
+		--真气>=3，使用神鹤引项踢
+		if Power() >= 3 then
+			Cnt = "P "
+			Cast('神鹤引项踢')
+			return
+		end
+		--真气<3，使用猛虎掌
+		if Power() < 3 then
+			Cnt = "P "
+			Cast('猛虎掌')
+			return
+		end
+	end
+	--扫堂腿
+	if not Talent('扫堂腿') then		--没点扫堂腿天赋就忽略之
+		spellInsert['扫堂腿'] = false
+	end
+	if (spellInsert['扫堂腿'] or IsAlt and IsCtrl and not IsShift) and CD('扫堂腿') <= CT then
+		Cnt = "P "
+		Cast('扫堂腿')
+		return
+	end
+end
+
+------------------------------策略-------------------------------
+function KeyPressing(indexS)
+	-- 手动暴发打Boss
+	-- 碎玉闪电、怒雷破在引导中，什么也不做
+	local IfCasting, _, CastingIcon, _, _, _, _, _, InterruptAble = UnitChannelInfo("player")
+	if IfCasting == TransferName('怒雷破') or IfCasting == TransferName('碎玉闪电') then
+		Cnt = Cnt..''
+		return
+	end
+
+	-- 连击天赋下用真气波保持连击
+	if not RangeIn() and Buff('连击') < 1 and BuffCount('连击') >= 6 and CD('真气波') <= CT and Talent('真气波') then
+		Cast('真气波')
+		return
+	end
+
+	if indexS == 1 then
+		-- 风火雷电CD，身上没有风火雷电Buff,按下Alt，卡怒雷破CD，就用风火雷电
+		if CD('风火雷电') <= CT and Buff('风火雷电') == 0 and IsAlt and not IsShift and not IsCtrl and CD('怒雷破') < 8 then
+			Cast('风火雷电')
+			return
+		end
+	elseif indexS == 2 then
+		--风火雷电CD，身上没有风火雷电Buff，卡怒雷破CD，就用风火雷电
+		if CD('风火雷电') <= CT and Buff('风火雷电') == 0 and CD('怒雷破') <= CT and CD('风领主之击') < 13 and
+					(BuffCount('电容') >= 18 or BuffCount('电容') < 15) and Power() >= spellSpend['怒雷破'] then
+			Cast('风火雷电')
+			return
+		end
+	elseif indexS == 3 then
+		--风火雷电CD，身上没有风火雷电Buff，卡怒雷破CD||神鹤层数>=3，就用风火雷电
+		if CD('风火雷电') <= CT and Buff('风火雷电') == 0 and (CD('怒雷破') <= CT or CountSHYXT >= 3) then
+			Cast('风火雷电')
+			return
+		end
+	end
+
+	if indexS == 3 then
+		--真气>=3，且怒雷破CD，使用怒雷破
+		if count_SHYXT <= 6 and Power() >= spellSpend['怒雷破'] and CD('怒雷破') <= CT then
+			Cast('怒雷破')
+			return
+		end
+		--怒雷破没CD，且旭日东升踢没CD，且升龙霸CD，近战范围内，使用升龙霸
+		if count_SHYXT <= 4 and Talent('升龙霸') and CD('怒雷破') > 1 and CD('旭日东升踢') > 1 and CD('升龙霸') <= CT and RangeIn() then
+			Cast('升龙霸')
+			return
+		end
+		-- 神鹤层数>=n，转圈
+		if count_SHYXT >= 3 and Power() >= 3 then
+			Cast('神鹤引项踢')
+			return
+		end
+		-- 神鹤层数>=5，猛虎掌攒星
+		if count_SHYXT >= 5 and EnG() >= 50 and (not locker['猛虎掌'] or Buff('连击') == 0) then
+			Cast('猛虎掌')
+			return
+		end
+	end
+
+	if indexS <= 2 then
+		-- 真气>=3，且怒雷破CD，使用怒雷破
+		if Buff('风火雷电') > 0 and Power() >= spellSpend['怒雷破'] and CD('怒雷破') <= CT then
+			Cast('怒雷破')
+			return
+		end
+		if Buff('风火雷电') > 0 and BuffCount('电容') >= 20 and GetUnitSpeed("player") == 0 then
+			Cast('碎玉闪电')
+			return
+		end
+	end
+
+	-- 怒雷破没CD，且旭日东升踢没CD，且升龙霸CD，近战范围内，使用升龙霸
+	if Talent('升龙霸') and CD('怒雷破') > 1 and CD('旭日东升踢') > 1 and CD('升龙霸') <= CT and RangeIn() then
+		Cast('升龙霸')
+		return
+	end
+
+	-- 真气<=1，且能量不满，且豪能酒CD，使用豪能酒
+	if Buff('屏气凝神') == 0 and Power() <= 1 and EnG() < EnGMax() and CD('豪能酒') <= 0.1 then
+		Cast('豪能酒')
+		return
+	end
+
+	-- 怒雷破刚用完，泄气循环，快好了攒气循环
+	if CD('怒雷破') < 5 and Power() < 5 then
+		--点穴踢时，且旭日东升踢CD，使用旭日东升踢
+		if Power() >= 2 and Buff('点穴踢') > 0 and CD('旭日东升踢') <= CT then
+			Cast('旭日东升踢')
+			return
+		end
+	else
+		--真气>=2，且旭日东升踢CD，使用旭日东升踢
+		if Power() >= 2 and CD('旭日东升踢') <= CT then
+			Cast('旭日东升踢')
+			return
+		end
+	end
+
+	-- 使用无锁免费幻灭踢
+	if Buff('幻灭踢!') > 0 and (not locker['幻灭踢'] or Buff('连击') == 0) then
+		Cast('幻灭踢')
+		return
+	end
+
+	-- 有橙头时，使用风领主之击
+	if indexS == 1 then
+		if Power() >= 2 and CD('风领主之击') <= CT then
+			Cast('风领主之击')
+			return
+		end
+	elseif indexS > 1 then
+		if Power() >= 2 and CD('风领主之击') <= CT and (CD('风火雷电') > 19 or Buff('风火雷电') > 0) then
+			Cast('风领主之击')
+			return
+		end
+	end
+	
+	if indexS <= 2 then
+		-- 真气>=3，且怒雷破CD，使用怒雷破
+		if Power() >= spellSpend['怒雷破'] and CD('怒雷破') <= CT then
+			Cast('怒雷破')
+			return
+		end
+	end
+
+	--真气<4，使用无锁猛虎掌
+	if EnG() >= 50 and Power() <= 4 and (not locker['猛虎掌'] or Buff('连击') == 0) then
+		Cast('猛虎掌')
+		return
+	end
+	--使用无锁幻灭踢
+	if Power() > 1 and (not locker['幻灭踢'] or Buff('连击') == 0) then
+		Cast('幻灭踢')
+		return
+	end
+
+	if indexS <= 2 then
+		-- 轮回之触CD，就用轮回之触
+		if CD('轮回之触') <= CT and (UnitLevel("target") >= 112 or UnitLevel("target") < 0) then
+			Cast('轮回之触')
+			return
+		end
+	end
+
+	if indexS <= 2 then
+		--皇帝的容电皮甲层数>=n，且人物静止，使用碎玉闪电
+		if BuffCount('电容') >= 12 and GetUnitSpeed("player") == 0 and Buff('风火雷电') == 0 and
+				Power() > 2 and EnG() > 50 and CD('豪能酒') < 30 and CD('怒雷破') > 4 and CD('风领主之击') > 4 then
+			Cast('碎玉闪电')
+			return
+		end
+	end
+
+	-- 真气波CD，使用真气波
+	if CD('真气波') <= CT and Talent('真气波') then
+		Cast('真气波')
+		return
+	end
+end
+
+------------------------------监测战斗记录和聊天记录-------------------------------
+local function checkEvent(self, event, ...)
+	if event == 'CHAT_MSG_WHISPER' then
+		local ChatMessage, Author = select(1, ...)
 		--监测策略值
 		if ChatMessage == "DPSerTaFeng_I_S01" then
 			Index_Strategy = 1
@@ -95,890 +623,149 @@ frame:SetScript("OnEvent", function(self, event, timestamp, eventType, _, source
 		end
 		--碧玉疾风
 		if ChatMessage == "DPSerTaFeng_BiYuJiFeng" then
-			Insert_BiYuJiFeng = 1
+			spellInsert['碧玉疾风'] = true
 		end
 		--神鹤引项踢
 		if ChatMessage == "DPSerTaFeng_ShenHeYinXiangTi" then
-			Insert_ShenHeYinXiangTi = 1
+			spellInsert['神鹤引项踢'] = true
 		end
 		--扫堂腿
 		if ChatMessage == "DPSerTaFeng_SaoTangTui" then
-			Insert_SaoTangTui = 1
+			spellInsert['扫堂腿'] = true
 		end
 	end
-	if event == "COMBAT_LOG_EVENT_UNFILTERED" then
+	if event == 'COMBAT_LOG_EVENT_UNFILTERED' then
+		local timestamp, eventType, hideCaster, sourceGUID, sourceName, sourceFlags,
+			  sourceRaidFlags, destGUID, destName, destFlags, destFlags2, spellID,
+			  spellName, _, extraskillID, extraSkillName = select(1, ...)
 		if sourceName == UnitName("player") and eventType == "SPELL_CAST_SUCCESS" then
-			--DEFAULT_CHAT_FRAME:AddMessage(spellName..", "..UnitPower("player",  12)..", CDNuLeiPo = "..floor(CDNuLeiPo))
+			if NOW0 then
+				print(format('间隔%s秒', string.format("%.1f", GetTime() - NOW0)), format('<%s>', spellName), format('剩<%d>气<%d>能', Power(), EnG()))
+				NOW0 = GetTime()
+			end
 			--从技能队列中清空”碧玉疾风“
-			if sourceName == UnitName("player") and eventType == "SPELL_CAST_SUCCESS" and spellID == 116847 then
-				Insert_BiYuJiFeng = nil
+			if spellID == 116847 then
+				spellInsert['碧玉疾风'] = false
 			end
 			--从技能队列中清空”神鹤引项踢“
-			if sourceName == UnitName("player") and eventType == "SPELL_CAST_SUCCESS" and spellID == 101546 then
-				Insert_ShenHeYinXiangTi = nil
+			if spellID == 101546 then
+				spellInsert['神鹤引项踢'] = false
 			end
 			--从技能队列中清空”扫堂腿“
-			if sourceName == UnitName("player") and eventType == "SPELL_CAST_SUCCESS" and spellID == 119381 then
-				Insert_SaoTangTui = nil
+			if spellID == 119381 then
+				spellInsert['扫堂腿'] = false
 			end
-			--连续释放2次技能就报警
-			the_spellname = spellName
-			if the_spellname == last_spellname then
-				DEFAULT_CHAT_FRAME:AddMessage(the_spellname.." just casted 2 times at "..timestamp)
+			if spellName == TransferName('猛虎掌') then				--如果刚才放了个猛虎掌
+				LockSpell('猛虎掌')
+			elseif spellName == TransferName('幻灭踢') then			--如果刚才放了个幻灭踢
+				LockSpell('幻灭踢')
+			elseif spellName == TransferName('神鹤引项踢') then		--如果刚才放了个神鹤引项踢
+				LockSpell('神鹤引项踢')
+			else
+				UnlockSpell()
+			end
+			-- 监测滞后了多久CD
+			local k, v
+			for k, v in pairs(lastCastTime) do
+				if spellName == TransferName(k) then
+					local maxCD = v[2]
+					local spendTime = GetTime() - v[1]
+					if spendTime >= maxCD * MinGanXiShu then
+						print(format('<%s>滞后了<%s>秒', spellName, string.format("%.1f", spendTime-maxCD)))
+					end
+					lastCastTime[k][1] = GetTime()
+				end
+			end
+			-- 连续释放2次技能就报警
+			if Talent('连击') and spellName == last_spellname then
+				print(format('连击被<%s>终止', spellName))
 			end
 			last_spellname = spellName
-			
-			--猛虎掌 100780 幻灭踢 100784 神鹤引项踢 101546
-			--旭日东升踢 107428 风领主之击 205320 怒雷破 113656 真气波 115098 升龙霸 152175
-			if spellID == 100780 then			--如果刚才放了个猛虎掌
-				Lock_HuanMieTi = 0						--幻灭踢
-				Lock_ShenHeYinXiangTi = 0			--神鹤引项踢
-				Lock_MengHuZhang = 1
-			elseif spellID == 100784 then			--如果刚才放了个幻灭踢
-				Lock_MengHuZhang = 0				--猛虎掌
-				Lock_ShenHeYinXiangTi = 0			--神鹤引项踢
-				Lock_HuanMieTi = 1
-			elseif spellID == 101546 then			--如果刚才放了个神鹤引项踢
-				Lock_MengHuZhang = 0				--猛虎掌
-				Lock_HuanMieTi = 0					--幻灭踢
-				Lock_ShenHeYinXiangTi = 1
-			else
-				Lock_MengHuZhang = 0				--猛虎掌
-				Lock_HuanMieTi = 0					--幻灭踢
-				Lock_ShenHeYinXiangTi = 0			--神鹤引项踢
-			end
-			if spellID == 117952 then			--如果刚才放了碎玉闪电
-				Lock_SuiYuShanDian = 1						--碎玉闪电
-			end
 		end
-	end
-end)
-
--- SPELL_DAMAGE事件
--- SPELL_CAST_SUCCESS
--- SPELL_CAST_FAILED
-
-local function GetOneCoolDown(JiNengID)
-	start, duration, enabled = GetSpellCooldown(JiNengID)
-	if start == 0 then
-		return 0
-	end
-	local temp = 10000
-	if enabled == 1 then
-		temp = duration - GetTime() + start
-		if temp < 0 then
-			temp = 0
+		-- 神鹤引项踢的监测
+		if (eventType == 'SPELL_AURA_APPLIED' or eventType == 'SPELL_AURA_REFRESH')
+				and spellName == TransferName('神鹤印记') and sourceName == UnitName('player') then  	-- 当某怪物被神鹤引项踢标记时
+			-- 将该怪物的ID和当前时间添加进表
+			sighedSHYXT[destGUID] = GetTime()
 		end
-	end
-	return temp
-end
-
-local function GetOneCoolDown(JiNengID)
-	start, duration, enabled = GetSpellCooldown(JiNengID)
-	if start == 0 then
-		return 0
-	end
-	local temp = 10000
-	if enabled == 1 then
-		temp = duration - GetTime() + start
-		if temp < 0 then
-			temp = 0
+		if eventType == 'SPELL_AURA_REMOVED' and spellName == TransferName('神鹤印记')
+				and sourceName == UnitName('player') then  	-- 当某怪物的神鹤引项踢标记被移除时
+			-- 将该怪物的ID从表中移除
+			sighedSHYXT[destGUID] = nil
 		end
-	end
-	return temp
-end
-
-local function GetAllCoolDown()						-- 监测技能CD
-	CDXuRiDongShengtTi = GetOneCoolDown(107428)				-- 旭日东升踢
-	CDHaoNengJiu = GetOneCoolDown(115288)				-- 豪能酒
-	CDXiangLongZaiTian = GetOneCoolDown(101545)				-- 翔龙在天
-	CDFengLingZhuZhiJi = GetOneCoolDown(205320)				-- 风领主之击
-	CDShengLongBa = GetOneCoolDown(152175)				-- 升龙霸
-	CDNuLeiPo = GetOneCoolDown(113656)				-- 怒雷破
-	CDSaoTangTui = GetOneCoolDown(119381)				-- 扫堂腿
-	CDZhenQiBo = GetOneCoolDown(115098)				-- 真气波
-	CDMengHuZhang = GetOneCoolDown(100780)				-- 猛虎掌
-	CDHuanMieTi = GetOneCoolDown(100784)				-- 幻灭踢
-	CDLunHuiZhiChu = GetOneCoolDown(115080)				-- 轮回之触
-	CDFengHuoLeiDian = GetOneCoolDown(137639)				-- 风火雷电
-	CDBaiHuXiaFan = GetOneCoolDown(123904)				-- 白虎下凡
-	CDBiYuJiFeng = GetOneCoolDown(116847)				-- 碧玉疾风
-	CDBingQiNingShen = GetOneCoolDown(152173)	    	-- 屏气凝神
-end
-
-local function GetOneBuff(DuiXiang, JiNengID)	-- 1存在，2层数，3剩余时间，4施法者
-	-- a,b,c,d=UnitBuff("player", index)    1为Buff名称，2为等级，3为图标，4为层数，5为类型（魔法诅咒），6为最大持续时间，7为释放的时间，8为上Buff的人，11为ID，index从右往左走
-	Temp1 = nil
-	Temp2 = 0
-	Temp3 = 0
-	Temp4 = nil
-	local i = 1
-	while true do
-		Buff1, Buff2, Buff3, Buff4, Buff5, Buff6, Buff7, Buff8, Buff9, Buff10, Buff11 = UnitBuff(DuiXiang, i)
-		if Buff11 == nil then break end
-		if Buff11 == JiNengID then
-			Temp1 = true
-			Temp2 = Buff4
-			Temp3 = Buff7 - GetTime()
-			if Temp3 < 0 then
-				Temp3 = 10000
-			end
-			Temp4 = Buff8
-			break
+		if eventType == 'UNIT_DIED' then  					-- 当某怪物的神鹤引项踢标记被移除时
+			-- 将该怪物的ID从表中移除
+			sighedSHYXT[destGUID] = nil
 		end
-		i = i + 1
 	end
 end
 
-local function GetAllBuff()					-- 监测Buff
-	GetOneBuff("player", 116768)  --幻灭踢
-	BuffHuanMieTi1 = Temp1
-	BuffHuanMieTi2 = Temp2
-	BuffHuanMieTi3 = Temp3
-	BuffHuanMieTi4 = Temp4
-	if BuffHuanMieTi1 then
-		BuffHuanMieTi = BuffHuanMieTi3
+------------------------------main-------------------------------
+local function main(self, elapsed)
+	Cnt = 'P '
+
+	IsCombat = UnitAffectingCombat("player")		-- 是否在战斗状态
+	IsAlt = IsAltKeyDown()					        -- 是否按下Alt键
+	IsCtrl = IsControlKeyDown()				        -- 是否按下Ctrl键
+	IsShift = IsShiftKeyDown()				        -- 是否按下Ctrl键
+
+	if Equip('怒雷鞋') then
+		spellSpend['怒雷破'] = 2
 	else
-		BuffHuanMieTi = 0
+		spellSpend['怒雷破'] = 3
 	end
-	--
-	GetOneBuff("player", 196741)  --连击
-	BuffLianJi1 = Temp1
-	BuffLianJi2 = Temp2
-	BuffLianJi3 = Temp3
-	BuffLianJi4 = Temp4
-	if BuffLianJi1 then
-		BuffLianJi = BuffLianJi3 
-	else
-		BuffLianJi = 0
-	end
-	BuffLianJi = 1  --启用此行，无论何种天赋均攒连击
-	--
-	GetOneBuff("player", 137639)  --风火雷电
-	BuffFengHuoLeiDian1 = Temp1
-	BuffFengHuoLeiDian2 = Temp2
-	BuffFengHuoLeiDian3 = Temp3
-	BuffFengHuoLeiDian4 = Temp4
-	if BuffFengHuoLeiDian1 then
-		BuffFengHuoLeiDian = BuffFengHuoLeiDian3
-	else
-		BuffFengHuoLeiDian = 0
-	end
-	--
-	GetOneBuff("player", 152173)  --屏气凝神
-	BuffBingQiNingShen1 = Temp1
-	BuffBingQiNingShen2 = Temp2
-	BuffBingQiNingShen3 = Temp3
-	BuffBingQiNingShen4 = Temp4
-	if BuffBingQiNingShen1 then
-		BuffBingQiNingShen = BuffBingQiNingShen3
-	else
-		BuffBingQiNingShen = 0
-	end
-	--
-	GetOneBuff("player", 235054)  --皇帝的容电皮甲 无限持续时间
-	BuffHuangDiDeRongDianPiJia1 = Temp1
-	BuffHuangDiDeRongDianPiJia2 = Temp2
-	BuffHuangDiDeRongDianPiJia3 = Temp3
-	BuffHuangDiDeRongDianPiJia4 = Temp4
-	--
-	GetOneBuff("player", 247255)  --点穴踢
-	BuffDianXueTi1 = Temp1
-	BuffDianXueTi2 = Temp2
-	BuffDianXueTi3 = Temp3
-	BuffDianXueTi4 = Temp4
-	if BuffDianXueTi1 then
-		BuffDianXueTi = BuffDianXueTi3
-	else
-		BuffDianXueTi = 0
-	end
-end
 
-local function GetOneDebuff(DuiXiang, JiNengID)	-- 1存在，2层数，3剩余时间，4施法者
-	Temp1 = nil
-	Temp2 = 0
-	Temp3 = 0
-	Temp4 = nil
-	local i = 1
-	while true do
-		Buff1, Buff2, Buff3, Buff4, Buff5, Buff6, Buff7, Buff8, Buff9, Buff10, Buff11 = UnitDebuff(DuiXiang, i)
-		if Buff11 == nil then break end
-		if Buff11 == JiNengID then
-			Temp1 = true
-			Temp2 = Buff4
-			Temp3 = Buff7 - GetTime()
-			if Temp3 < 0 then
-				Temp3 = 10000
-			end
-			Temp4 = Buff8
-			break
-		end
-		i = i + 1
+	if select(2, UnitClass("player")) == "MONK" then
+		count_SHYXT = CountSHYXT()
+		KeyPressing(Index_Strategy)
 	end
-end
 
-function GetAllDebuff()						-- 监测Debuff
-	--GetOneDebuff("target", 1079)  --割裂
-	--DeBuffGeLie1 = Temp1
-	--DeBuffGeLie2 = Temp2
-	--DeBuffGeLie3 = Temp3
-	--DeBuffGeLie4 = Temp4
-	--
-end
-
-function GetAllHP()						-- 监测HP
-	HP = UnitHealth("target")
-	HPMax = UnitHealthMax("target")
-	HPP = HP/HPMax
-	--_,_,_,_,OP = UnitDetailedThreatSituation("player","target") / 100
-	--_,_,_,_,OPT = UnitDetailedThreatSituation("targettarget","target") / 100
-	--if OPT > 0 then
-	--	OPP = OP / OPT
-	--end
-end
-
-function GetSelfMP()						-- 监测MP
-	MP = UnitMana("player")
-	MPMax = UnitManaMax("player")
-	MPP = MP/MPMax
-	EnG = UnitPower("player", 3)
-	EnGMax = UnitPowerMax("player", 3)
-	EnGP = EnG/EnGMax
-	if EquipNuLeiXie then
-		Qi_NuLeiPo = 2
-	else
-		Qi_NuLeiPo = 3
-	end
-end
-
-function GetSelfTalents()						-- 监测天赋
-	Talent_ZhenQiBo = select(4, GetTalentInfo(1, 3, 1))				--真气波
-	Talent_MengHuZhang = select(4, GetTalentInfo(1, 2, 1))				--猛虎掌
-	Talent_PingXinZhiHuan = select(4, GetTalentInfo(6, 1, 1))				--平心之环
-	Talent_XuanNiuDiaoXiang = select(4, GetTalentInfo(6, 2, 1))		--玄牛雕像
-	Talent_SaoTangTui = select(4, GetTalentInfo(6, 3, 1))						--扫堂腿
-	Talent_BiYuJiFeng = select(4, GetTalentInfo(6, 1, 1))						--碧玉疾风
-	Talent_BaiHuXiaFan = select(4, GetTalentInfo(6, 2, 1))					--白虎下凡
-	Talent_LianJi = select(4, GetTalentInfo(6, 3, 1))								--连击
-	Talent_ZhenQiLiuZhuan = select(4, GetTalentInfo(7, 1, 1))				--真气流转
-	Talent_ShengLongBa = select(4, GetTalentInfo(7, 2, 1))					--升龙霸
-	Talent_BingQiNingShen = select(4, GetTalentInfo(7, 3, 1))				--屏气凝神
-end
-
-function GetSelfEquipments()						-- 监测装备
-	EquipDianRongXiong      = IsEquippedItem(144239)		-- 电容胸
-	EquipNuLeiXie           = IsEquippedItem(137029)		-- 怒雷鞋
-end
-
-function ClearSpellList()		--清除插队队列
-	Insert_BiYuJiFeng = nil
-	Insert_ShenHeYinXiangTi = nil
-	Insert_SaoTangTui = nil
-end
-function InsertSpellList()		--添加插队队列
-	--打断
-	if UnitName("focus") ~= nil then
-		JianCeDuiXiang = "foucs"
-	else
-		JianCeDuiXiang = "target"
-	end
-	--如果按下Ctrl并且检测到相关技能施放，正读条
-	if IsCtrl and not IsAlt and not IsShift then  
-		IfCasting, _, CastingIcon, _, _, _, _, _, InterruptAble = UnitCastingInfo(JianCeDuiXiang)
-		if IfCasting and (not InterruptAble) then
-			-- 如果目标正在施法，就打断之
-			Cnt = "P "
-			QieHouShou()
-			return
-		end
-	end
-	--如果按下Shift并且检测到相关技能施放，倒读条
-	if IsShift and not IsAlt and not IsCtrl then  
-		IfCasting, _, CastingIcon, _, _, _, _, _, InterruptAble = UnitChannelInfo(JianCeDuiXiang)
-		if IfCasting and (not InterruptAble) then
-			-- 如果目标正在引导通道法术，就打断之
-			Cnt = "P "
-			QieHouShou()
-			return
-		end
-	end
-	--第一时间取消翔龙在天
-	if select(2, GetActionInfo(72)) == 115057 then
-		Cnt = "P "
-		XiangLongZaiTian()
-		return
-	end
-	--碧玉疾风
-	if not Talent_BiYuJiFeng then		--没点碧玉疾风天赋就忽略之
-		Insert_BiYuJiFeng = nil
-	end
-	if Insert_BiYuJiFeng and CDBiYuJiFeng < gcd and power >= 1 then	
-		Cnt = "P "
-		BiYuJiFeng()
-		return
-	elseif Insert_BiYuJiFeng and CDBiYuJiFeng < gcd and power < 1 then
-		Cnt = "P "
-		MengHuZhang()
-		return
-	end
-	--神鹤引项踢
-	if Insert_ShenHeYinXiangTi then	
-		--真气<=1，且能量不满，且豪能酒CD，使用豪能酒
-		if power <= 1 and EnG < EnGMax and CDHaoNengJiu < gcd then
-			Cnt = "P "
-			HaoNengJiu()
-			return
-		end
-		--真气>=3，使用神鹤引项踢
-		if power >= 3 then
-			Cnt = "P "
-			ShenHeYinXiangTi()
-			return
-		end
-		--真气<3，使用猛虎掌
-		if power < 3 then
-			Cnt = "P "
-			MengHuZhang()
-			return
-		end
-	end
-	--扫堂腿
-	if not Talent_SaoTangTui then		--没点扫堂腿天赋就忽略之
-		Insert_SaoTangTui = nil
-	end
-	if (Insert_SaoTangTui or IsAlt and IsCtrl and not IsShift) and CDSaoTangTui < gcd then
-		Cnt = "P "
-		SaoTangTui()
-		return
-	end
-end
-
-------------------------------正文-------------------------------
-
-frame:SetScript("OnUpdate", function(self, elapsed)              -- elapsed：距上次执行该事件过去的时间
-	updateElapsed = updateElapsed + elapsed
-	if updateElapsed > 0.01 then              -- 常量TOOLTIP_UPDATE_TIME：【信息提示】更新间隔，0.2秒
-		updateElapsed = 0
-		
-		Cnt = ""
-		IsCombat = UnitAffectingCombat("player")	-- 是否在战斗状态
-		GetSelfEquipments()
-		GetAllCoolDown()
-		GetAllHP()
-		GetSelfMP()
-		GetAllBuff()
-		GetAllDebuff()
-		IsAlt = IsAltKeyDown()					        -- 是否按下Alt键
-		IsCtrl = IsControlKeyDown()				        -- 是否按下Ctrl键
-		IsShift = IsShiftKeyDown()				        -- 是否按下Ctrl键
-		power = UnitPower("player",  12)		        -- 监测真气值
-		GetSelfTalents()						        -- 检测天赋
-		gcd = CDMengHuZhang + 0.1		                -- 公共cd
-		IfIn10yard = CheckInteractDistance("target", 3)	-- 判断是否在近战范围
-		unitLevel = UnitLevel("target")                 -- 目标等级
-		
-		--电容20层提醒
-		if BuffHuangDiDeRongDianPiJia1 and lastDianRong == 19 and BuffHuangDiDeRongDianPiJia2 == 20 then
-			PlaySoundFile("Sound\\1.mp3")
-		end
-		lastDianRong = BuffHuangDiDeRongDianPiJia2
-		if BuffHuangDiDeRongDianPiJia2 < 5 then
-			Lock_SuiYuShanDian = 0
-		end		
-		
-		local PlayerClass
-		PlayerClass = select(2, UnitClass("player"))
-		IfIn10yard = CheckInteractDistance("target", 3)		-- 10码内
-		
-		if PlayerClass == "MONK" then
-			Cnt = "P "
-			if Index_Strategy == 1 then
-				ForBoss()
-			elseif Index_Strategy == 2 then
-				LittleAOE()
-			elseif Index_Strategy == 3 then
-				AOE()
-			elseif Index_Strategy == 0 then
-				Cnt = "P "
-			end
-		else
-			Cnt = "P "
-		end
-
-		--非战斗时，清空插队队列
-		if not IsCombat then
-			ClearSpellList()
-		end
+	--非战斗时，清空插队队列
+	if IsCombat then
 		--插队技能
 		InsertSpellList()
-		--显示目前的策略
-		Cnt = Cnt.."\nF"..Index_Strategy
-		self.text:SetText(Cnt)
-	end
-end)
-
----------------------正文-------------------
--- 策略
--- 1 猛虎掌 0000 2 旭日东升踢 0008 3 幻灭踢 0080 4 豪能酒 0088 5 切喉手 0800 6 轮回之触 0808 
--- 7 风领主之击 0880 8 升龙霸 0888 9 怒雷破 8000 0 真气波 8008 Y 风火雷电 8080 G 神鹤引项踢 8088
-function MengHuZhang()		--猛虎掌
-	Cnt = Cnt.."1  "..select(1, GetSpellInfo(100780))		--1
-end
-function XuRiDongShengTi()		--旭日东升踢
-	Cnt = Cnt.."2  "..select(1, GetSpellInfo(107428))		--2
-end
-function HuanMieTi()		--幻灭踢
-	Cnt = Cnt.."3  "..select(1, GetSpellInfo(100784))		--3
-end
-function HaoNengJiu()		--豪能酒
-	Cnt = Cnt.."4  "..select(1, GetSpellInfo(115288))		--4
-end
-function QieHouShou()		--切喉手
-	Cnt = Cnt.."5  "..select(1, GetSpellInfo(116705))		--5
-end
-function LunHuiZhiChu()		--轮回之触
-	Cnt = Cnt.."6  "..select(1, GetSpellInfo(115080))		--6
-end
-function FengLingZhuZhiJi()		--风领主之击
-	Cnt = Cnt.."7  "..select(1, GetSpellInfo(205320))		--7
-end
-function ShengLongBa()		--升龙霸
-	Cnt = Cnt.."8  "..select(1, GetSpellInfo(152175))		--8
-end
-function NuLeiPo()		--怒雷破
-	Cnt = Cnt.."9  "..select(1, GetSpellInfo(113656))		--9
-end
-function ZhenQiBo()		--真气波
-	Cnt = Cnt.."0  "..select(1, GetSpellInfo(115098))		--0
-end
-function FengHuoLeiDian()		--风火雷电
-	Cnt = Cnt.."Y  "..select(1, GetSpellInfo(137639))		--Y
-end
-function ShenHeYinXiangTi()		--神鹤引项踢
-	Cnt = Cnt.."G  "..select(1, GetSpellInfo(101546))		--G
-end
-function BiYuJiFeng()		--碧玉疾风
-	Cnt = Cnt.."H  "..select(1, GetSpellInfo(116847))		--H
-end
-function SuiYuShanDian()		--碎玉闪电
-	Cnt = Cnt.."J  "..select(1, GetSpellInfo(117952))		--J
-end
-function SaoTangTui()		--扫堂腿
-	Cnt = Cnt.."E  "..select(1, GetSpellInfo(119381))		--E
-end
-function ZhenQiTu()		--真气突
-	Cnt = Cnt.."Q  "..select(1, GetSpellInfo(115008))		--Q
-end
-function XiangLongZaiTian()		--翔龙在天
-	Cnt = Cnt.."`  "..select(1, GetSpellInfo(101545))		--`  激活时变115057
-end
----------正文---------------------------------------------------------------------------
-function AddPowerCircle()
-	--攒气循环
-	--点穴踢时，且旭日东升踢CD，使用旭日东升踢
-	if (BuffBingQiNingShen > 0 or power >= 2) and BuffDianXueTi1 and CDXuRiDongShengtTi < gcd then
-		XuRiDongShengTi()
-		return
-	end
-	--使用无锁神鹤引项踢
-	if BuffBingQiNingShen > 0 and (Lock_ShenHeYinXiangTi == 0 or Talent_LianJi and BuffLianJi == 0 or not Talent_LianJi) then
-		ShenHeYinXiangTi()
-		return
-	end
-	--使用无锁免费幻灭踢
-	if power >=1 and (BuffHuanMieTi > 0 or BuffBingQiNingShen1) and (Lock_HuanMieTi == 0 or Talent_LianJi and BuffLianJi == 0 or not Talent_LianJi) then
-		HuanMieTi()
-		return
-	end
-	--真气波CD，使用真气波
-	if CDZhenQiBo < gcd and BuffBingQiNingShen == 0 and Talent_ZhenQiBo then
-		ZhenQiBo()
-		return
-	end
-	--皇帝的容电皮甲层数>=20，且人物静止，使用碎玉闪电
-	if BuffHuangDiDeRongDianPiJia2 >= 20 and Lock_SuiYuShanDian == 0 and GetUnitSpeed("player") == 0 and BuffBingQiNingShen == 0 then
-		SuiYuShanDian()
-		return
-	end
-	--真气<4，使用无锁猛虎掌
-	if EnG >= 50 and power <= 4 and (Lock_MengHuZhang == 0 or Talent_LianJi and BuffLianJi == 0 or not Talent_LianJi) then
-		MengHuZhang()
-		return
-	end
-	--使用无锁幻灭踢
-	if power >= 5 and (Lock_HuanMieTi == 0 or Talent_LianJi and BuffLianJi == 0 or not Talent_LianJi) then
-		HuanMieTi()
-		return
-	end
-	--使用无锁猛虎掌
-	if EnG >= 50 and Lock_MengHuZhang == 0 or Talent_LianJi and BuffLianJi == 0 or not Talent_LianJi then
-		MengHuZhang()
-		return
-	end
-	--使用无锁幻灭踢
-	if power >= 2 and (Lock_HuanMieTi == 0 or Talent_LianJi and BuffLianJi == 0 or not Talent_LianJi) then
-		HuanMieTi()
-		return
-	end
-end
-
-function MinusPowerCircle()
-	--泄气循环
-	--真气>=2，且旭日东升踢CD，使用旭日东升踢
-	if (power >= 2 or BuffBingQiNingShen > 0) and CDXuRiDongShengtTi < gcd then
-		XuRiDongShengTi()
-		return
-	end
-	--真气>=2，且风领主之击CD，使用风领主之击
-	if power >= 2 and CDFengLingZhuZhiJi < gcd then
-		FengLingZhuZhiJi()
-		return
-	end
-	--使用无锁神鹤引项踢
-	if BuffBingQiNingShen > 0 and (Lock_ShenHeYinXiangTi == 0 or Talent_LianJi and BuffLianJi == 0 or not Talent_LianJi) then
-		ShenHeYinXiangTi()
-		return
-	end
-	--使用无锁幻灭踢
-	if (power >= 2 or power >=1 and BuffHuanMieTi > 0) and (Lock_HuanMieTi == 0 or Talent_LianJi and BuffLianJi == 0 or not Talent_LianJi) then
-		HuanMieTi()
-		return
-	end
-	--真气波CD，使用真气波
-	if CDZhenQiBo < gcd and BuffBingQiNingShen == 0 and Talent_ZhenQiBo then
-		ZhenQiBo()
-		return
-	end
-	--皇帝的容电皮甲层数>=20，且人物静止，使用碎玉闪电
-	if BuffHuangDiDeRongDianPiJia2 >= 20 and Lock_SuiYuShanDian == 0 and GetUnitSpeed("player") == 0 and BuffBingQiNingShen == 0 then
-		SuiYuShanDian()
-		return
-	end
-	--真气<4，使用无锁猛虎掌
-	if EnG >= 50 and power <= 4 and (Lock_MengHuZhang == 0 or Talent_LianJi and BuffLianJi == 0 or not Talent_LianJi) then
-		MengHuZhang()
-		return
-	end
-	--使用无锁猛虎掌
-	if EnG >= 50 and Lock_MengHuZhang == 0 or Talent_LianJi and BuffLianJi == 0 or not Talent_LianJi then
-		MengHuZhang()
-		return
-	end
-end
-
-function AOEAddPowerCircle()
-	--攒气循环
-	--点穴踢时，且旭日东升踢CD，使用旭日东升踢
-	if (BuffBingQiNingShen > 0 or power >= 2) and BuffDianXueTi1 and CDXuRiDongShengtTi < gcd then
-		XuRiDongShengTi()
-		return
-	end
-	--使用无锁神鹤引项踢
-	if BuffBingQiNingShen > 0 and (Lock_ShenHeYinXiangTi == 0 or Talent_LianJi and BuffLianJi == 0 or not Talent_LianJi) then
-		ShenHeYinXiangTi()
-		return
-	end
-	--使用无锁免费幻灭踢
-	if power >=1 and (BuffHuanMieTi > 0 or BuffBingQiNingShen1) and (Lock_HuanMieTi == 0 or Talent_LianJi and BuffLianJi == 0 or not Talent_LianJi) then
-		HuanMieTi()
-		return
-	end
-	--真气波CD，使用真气波
-	if CDZhenQiBo < gcd and BuffBingQiNingShen == 0 and Talent_ZhenQiBo then
-		ZhenQiBo()
-		return
-	end
-	--皇帝的容电皮甲层数>=20，且人物静止，使用碎玉闪电
-	if BuffHuangDiDeRongDianPiJia2 >= 20 and Lock_SuiYuShanDian == 0 and GetUnitSpeed("player") == 0 and BuffBingQiNingShen == 0 then
-		SuiYuShanDian()
-		return
-	end
-	--真气<4，使用无锁猛虎掌
-	if EnG >= 50 and power <= 4 and (Lock_MengHuZhang == 0 or Talent_LianJi and BuffLianJi == 0 or not Talent_LianJi) then
-		MengHuZhang()
-		return
-	end
-	--使用无锁神鹤引项踢
-	if power >= 5 and (Lock_ShenHeYinXiangTi == 0 or Talent_LianJi and BuffLianJi == 0 or not Talent_LianJi) then
-		ShenHeYinXiangTi()
-		return
-	end
-	--使用无锁猛虎掌
-	if EnG >= 50 and Lock_MengHuZhang == 0 or Talent_LianJi and BuffLianJi == 0 or not Talent_LianJi then
-		MengHuZhang()
-		return
-	end
-	--使用无锁幻灭踢
-	if power >= 2 and (Lock_HuanMieTi == 0 or Talent_LianJi and BuffLianJi == 0 or not Talent_LianJi) then
-		HuanMieTi()
-		return
-	end
-end
-
-function AOEMinusPowerCircle()
-	--泄气循环
-	--使用无锁神鹤引项踢
-	if BuffBingQiNingShen > 0 and (Lock_ShenHeYinXiangTi == 0 or Talent_LianJi and BuffLianJi == 0 or not Talent_LianJi) then
-		ShenHeYinXiangTi()
-		return
-	end
-	--升龙霸天赋下，真气>=2，且旭日东升踢CD，且怒雷破已用，且升龙霸CD，使用旭日东升踢
-	if Talent_ShengLongBa and (power >= 2 or BuffBingQiNingShen > 0) and CDXuRiDongShengtTi < gcd and CDNuLeiPo > gcd and CDShengLongBa < gcd then
-		XuRiDongShengTi()
-		return
-	end
-	--真气>=2，且风领主之击CD，使用风领主之击
-	if power >= 2 and CDFengLingZhuZhiJi < gcd then
-		FengLingZhuZhiJi()
-		return
-	end
-	--使用无锁免费幻灭踢
-	if power >=1 and (BuffHuanMieTi > 0 or BuffBingQiNingShen1) and (Lock_HuanMieTi == 0 or Talent_LianJi and BuffLianJi == 0 or not Talent_LianJi) then
-		HuanMieTi()
-		return
-	end
-	--使用无锁神鹤引项踢
-	if power >= 3 and (Lock_ShenHeYinXiangTi == 0 or Talent_LianJi and BuffLianJi == 0 or not Talent_LianJi) then
-		ShenHeYinXiangTi()
-		return
-	end
-	--真气波CD，使用真气波
-	if CDZhenQiBo < gcd and BuffBingQiNingShen == 0 and Talent_ZhenQiBo then
-		ZhenQiBo()
-		return
-	end
-	--皇帝的容电皮甲层数>=20，且人物静止，使用碎玉闪电
-	if BuffHuangDiDeRongDianPiJia2 >= 20 and Lock_SuiYuShanDian == 0 and GetUnitSpeed("player") == 0 and BuffBingQiNingShen == 0 then
-		SuiYuShanDian()
-		return
-	end
-	--真气<4，使用无锁猛虎掌
-	if EnG >= 50 and power <= 4 and (Lock_MengHuZhang == 0 or Talent_LianJi and BuffLianJi == 0 or not Talent_LianJi) then
-		MengHuZhang()
-		return
-	end
-	--使用无锁猛虎掌
-	if EnG >= 50 and Lock_MengHuZhang == 0 or Talent_LianJi and BuffLianJi == 0 or not Talent_LianJi then
-		MengHuZhang()
-		return
-	end
-	--使用无锁幻灭踢
-	if (power >= 2 or power >=1 and BuffHuanMieTi > 0) and (Lock_HuanMieTi == 0 or Talent_LianJi and BuffLianJi == 0 or not Talent_LianJi) then
-		HuanMieTi()
-		return
-	end
-end
-
-function ForBoss()
-	--单体Boss
-	--怒雷破在引导中，什么也不做（屏气凝神期间，引导至旭日东升踢CD）
-	IfCasting, _, CastingIcon, _, _, _, _, _, InterruptAble = UnitChannelInfo("player")
-	if IfCasting == select(1, GetSpellInfo(113656)) and not (BuffBingQiNingShen > 0 and CDXuRiDongShengtTi < gcd) then
-		Cnt = Cnt..""
-		return
-	end
-	--引导碎玉闪电期间，啥也不干
-	if IfCasting == select(1, GetSpellInfo(117952)) then
-		Cnt = Cnt..""
-		return
-	end
-	
-	--连击天赋下用翔龙、真气波保持连击
-	if Talent_LianJi and not IfIn10yard and BuffLianJi < 1 and BuffLianJi2 >= 6 and CDZhenQiBo < gcd and Talent_ZhenQiBo then
-		ZhenQiBo()
-		return
-	end
-	if Talent_LianJi and not IfIn10yard and BuffLianJi < 1 and BuffLianJi2 >= 6 and CDXiangLongZaiTian < gcd then
-		XiangLongZaiTian()
-		return
-	end
-	
-	--风火雷电CD，身上没有风火雷电Buff,按下Alt，卡怒雷破CD，就用风火雷电
-	if not Talent_BingQiNingShen and CDFengHuoLeiDian < gcd and BuffFengHuoLeiDian == 0 and IsAlt and not IsShift and not IsCtrl and CDNuLeiPo < 8 then
-		FengHuoLeiDian()
-		return
-	end
-
-	--轮回之触CD，就用轮回之触
-	if CDLunHuiZhiChu < gcd and (unitLevel >= 112 or unitLevel < 0) then
-		LunHuiZhiChu()
-		return
-	end
-	--真气<=1，且能量不满，且豪能酒CD，使用豪能酒
-	if not BuffBingQiNingShen1 and power <= 1 and EnG < EnGMax and CDHaoNengJiu < gcd then
-		HaoNengJiu()
-		return
-	end
-	--屏气凝神天赋下，自动释放屏气凝神（怒雷破刚引导完）
-    if Talent_BingQiNingShen and CDBingQiNingShen < gcd and CDNuLeiPo > 12 and not IfCasting then
-		FengHuoLeiDian()
-		return
-	end
-	--真气>=3，且怒雷破CD，使用怒雷破
-	if (power >= Qi_NuLeiPo or BuffBingQiNingShen > 0) and CDNuLeiPo < gcd and (not Talent_BingQiNingShen or Talent_BingQiNingShen and (CDBingQiNingShen > 8 or CDBingQiNingShen < 4 or BuffBingQiNingShen > 0)) then
-		NuLeiPo()
-		return
-	end
-	--怒雷破没CD，且旭日东升踢没CD，且升龙霸CD，近战范围内，使用升龙霸
-	if Talent_ShengLongBa and CDNuLeiPo > gcd and CDXuRiDongShengtTi > gcd and CDShengLongBa < gcd and IfIn10yard then
-		ShengLongBa()
-		return
-	end
-
-	--怒雷破刚用完，泄气循环，快好了攒气循环
-	if CDNuLeiPo < 4 and power < 5 then
-		AddPowerCircle()
-		return
 	else
-		MinusPowerCircle()
-		return
+		ClearSpellList()
 	end
-	
-	--否则，什么都不干
-	Cnt = Cnt..""
-	return
+
+	-- 显示上锁的技能
+	local k
+	local C = ''
+	for k, _ in pairs(locker) do
+		if locker[k] then
+			C = ' Lock：'..k
+			break
+		end
+	end
+
+	--显示目前的策略
+	Cnt = Cnt.."\nF"..Index_Strategy..C
+	self.text:SetText(Cnt)
 end
 
-function LittleAOE()
-	--2目标以上
-	--怒雷破在引导中，什么也不做
-	IfCasting, _, CastingIcon, _, _, _, _, _, InterruptAble = UnitChannelInfo("player")
-	if IfCasting == select(1, GetSpellInfo(113656)) and not (BuffBingQiNingShen > 0 and CDXuRiDongShengtTi < gcd) then
-		Cnt = Cnt..""
-		return
-	end
-	--引导碎玉闪电期间，啥也不干
-	if IfCasting == select(1, GetSpellInfo(117952)) then
-		Cnt = Cnt..""
-		return
-	end
-	--第一时间取消翔龙在天
-	if select(2, GetActionInfo(72)) ~= 101545 then
-		XiangLongZaiTian()
-		return
-	end
-	
-	--连击天赋下用翔龙、真气波保持连击
-	if Talent_LianJi and not IfIn10yard and BuffLianJi < 1 and BuffLianJi2 >= 6 and CDZhenQiBo < gcd and Talent_ZhenQiBo then
-		ZhenQiBo()
-		return
-	end
-	if Talent_LianJi and not IfIn10yard and BuffLianJi < 1 and BuffLianJi2 >= 6 and CDXiangLongZaiTian < gcd then
-		XiangLongZaiTian()
-		return
-	end
-
-	--轮回之触CD，就用轮回之触
-	if CDLunHuiZhiChu < gcd and (unitLevel >= 112 or unitLevel < 0) then
-		LunHuiZhiChu()
-		return
-	end
-	
-	--风火雷电CD，身上没有风火雷电Buff，卡怒雷破CD，就用风火雷电
-	if not Talent_BingQiNingShen and CDFengHuoLeiDian < gcd and BuffFengHuoLeiDian == 0 and CDNuLeiPo < gcd then
-		FengHuoLeiDian()
-		return
-	end
-	--真气<=1，且能量不满，且豪能酒CD，使用豪能酒
-	if not BuffBingQiNingShen1 and power <= 1 and EnG < EnGMax and CDHaoNengJiu < gcd then
-		HaoNengJiu()
-		return
-	end
-	--怒雷破没CD，且旭日东升踢没CD，且升龙霸CD，近战范围内，使用升龙霸
-	if CDNuLeiPo > gcd and CDXuRiDongShengtTi > gcd and CDShengLongBa < gcd and IfIn10yard then
-		ShengLongBa()
-		return
-	end
-	--屏气凝神天赋下，自动释放屏气凝神（怒雷破刚引导完）
-    if Talent_BingQiNingShen and CDBingQiNingShen < gcd and CDNuLeiPo > 12 and not IfCasting then
-		FengHuoLeiDian()
-		return
-	end
-	--真气>=3，且怒雷破CD，(风火雷电可用或再用)，使用怒雷破
-	if (power >= Qi_NuLeiPo or BuffBingQiNingShen > 0) and CDNuLeiPo < gcd and (not Talent_BingQiNingShen and (CDFengHuoLeiDian > 3 or BuffFengHuoLeiDian > 0) or Talent_BingQiNingShen and (CDBingQiNingShen > 8 or CDBingQiNingShen < 4 or BuffBingQiNingShen > 0)) then
-		NuLeiPo()
-		return
-	end
-
-	--怒雷破刚用完，泄气循环，快好了攒气循环
-	if CDNuLeiPo < 4 and power < 5 then
-		AddPowerCircle()
-		return
-	else
-		MinusPowerCircle()
-		return
-	end
-	
-	--否则，什么都不干
-	Cnt = Cnt..""
-	return
-end
-
-function AOE()
-	--6目标以上
-	--怒雷破在引导中，什么也不做
-	IfCasting, _, CastingIcon, _, _, _, _, _, InterruptAble = UnitChannelInfo("player")
-	if IfCasting == select(1, GetSpellInfo(113656)) and not (BuffBingQiNingShen > 0 and CDXuRiDongShengtTi < gcd) then
-		Cnt = Cnt..""
-		return
-	end
-	--引导碎玉闪电期间，啥也不干
-	if IfCasting == select(1, GetSpellInfo(117952)) then
-		Cnt = Cnt..""
-		return
-	end
-	--第一时间取消翔龙在天
-	if select(2, GetActionInfo(72)) ~= 101545 then
-		XiangLongZaiTian()
-		return
-	end
-	
-	--连击天赋下用翔龙、真气波保持连击
-	if Talent_LianJi and not IfIn10yard and BuffLianJi < 1 and BuffLianJi2 >= 6 and CDZhenQiBo < gcd and Talent_ZhenQiBo then
-		ZhenQiBo()
-		return
-	end
-	if Talent_LianJi and not IfIn10yard and BuffLianJi < 1 and BuffLianJi2 >= 6 and CDXiangLongZaiTian < gcd then
-		XiangLongZaiTian()
-		return
-	end
-	
-	--风火雷电CD，身上没有风火雷电Buff，卡怒雷破CD，就用风火雷电
-	if not Talent_BingQiNingShen and CDFengHuoLeiDian < gcd and BuffFengHuoLeiDian == 0 and CDNuLeiPo < gcd then
-		FengHuoLeiDian()
-		return
-	end
-	--真气<=1，且能量不满，且豪能酒CD，使用豪能酒
-	if not BuffBingQiNingShen1 and power <= 1 and EnG < EnGMax and CDHaoNengJiu < gcd then
-		HaoNengJiu()
-		return
-	end
-	--怒雷破没CD，且旭日东升踢没CD，且升龙霸CD，近战范围内，使用升龙霸
-	if CDNuLeiPo > gcd and CDXuRiDongShengtTi > gcd and CDShengLongBa < gcd and IfIn10yard then
-		ShengLongBa()
-		return
-	end
-	--屏气凝神天赋下，自动释放屏气凝神（怒雷破刚引导完）
-    if Talent_BingQiNingShen and CDBingQiNingShen < gcd and CDNuLeiPo > 12 and not IfCasting then
-		FengHuoLeiDian()
-		return
-	end
-	--真气>=3，且怒雷破CD，(风火雷电可用或再用)，使用怒雷破
-	if (power >= Qi_NuLeiPo or BuffBingQiNingShen > 0) and CDNuLeiPo < gcd and (not Talent_BingQiNingShen and (CDFengHuoLeiDian > 3 or BuffFengHuoLeiDian > 0) or Talent_BingQiNingShen and (CDBingQiNingShen > 8 or CDBingQiNingShen < 4 or BuffBingQiNingShen > 0)) then
-		NuLeiPo()
-		return
-	end
-
-	--怒雷破刚用完，泄气循环，快好了攒气循环
-	if CDNuLeiPo < 4 and power < 5 then
-		AOEAddPowerCircle()
-		return
-	else
-		AOEMinusPowerCircle()
-		return
-	end
-	
-	--否则，什么都不干
-	Cnt = Cnt..""
-	return
+------------------------------设置Button属性-------------------------------
+do
+	displayFrame:SetWidth(16)                                                                 -- 定义frame的宽
+	displayFrame:SetHeight(16)                                                                -- 定义frame的高
+	displayFrame:SetPoint("CENTER", 0, 120)                                                   -- 定义frame的中心位置
+	displayFrame:SetMovable(true)                                                             -- 将frame设为可移动
+	displayFrame:SetUserPlaced(true)                                                          -- 将frame设为可自定义位置
+	displayFrame:SetClampedToScreen(true)                                                     -- 允许将该frame拖出屏幕(or not?)
+	displayFrame:SetHighlightTexture("Interface\\Buttons\\ButtonHilight-Square", "ADD")       -- 设置frame的纹理
+	displayFrame:SetBackdropBorderColor(100, 100, 100)
+	displayFrame.icon = displayFrame:CreateTexture(displayFrame:GetName().."Icon",
+		 "ARTWORK") 																		  -- 设置frame的图标
+	displayFrame.icon:SetAllPoints(displayFrame)
+	displayFrame.icon:SetTexture("Interface\\Icons\\Ability_Druid_SkinTeeth")
+	displayFrame.text = displayFrame:CreateFontString(displayFrame:GetName().."Text",
+		"ARTWORK", "GameFontHighlightLeft") 	-- 为frame创建一个新的Fontstring目标
+	displayFrame.text:SetPoint("LEFT", displayFrame, "RIGHT", 2, 0)
+	displayFrame.text:SetFont(STANDARD_TEXT_FONT, 30)
+	displayFrame:RegisterForDrag("LeftButton")                                                -- 左键可拖动该frame的位置
+	displayFrame:SetScript("OnDragStart", displayFrame.StartMoving)
+	displayFrame:SetScript("OnDragStop", displayFrame.StopMovingOrSizing)
+	displayFrame:RegisterEvent("COMBAT_LOG_EVENT_UNFILTERED")                       		  -- 设定该frame关注的事件：战斗信息
+	displayFrame:RegisterEvent("CHAT_MSG_WHISPER")											  -- 设定该frame关注的事件：聊天记录
+	displayFrame:SetScript("OnUpdate", main)
+	displayFrame:SetScript("OnEvent", checkEvent)
 end

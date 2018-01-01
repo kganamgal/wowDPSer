@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html>
+	<head>
+	  <meta charset="utf-8">
+	  <title>wow插件笔记</title>
+	</head>
+	<body>
+
+		<h1>wow插件笔记</h1>
+
+		<ol>
+			<li><h2>参考网址</h2></li>
+
+			<p>目录：<a href="http://bbs.ngacn.cc/read.php?tid=4004812">nga的大神写作</a></p>
+			<p>维基百科：<a href="http://wowwiki.wikia.com/">最全的英文资料网站</a></p>
+
+
+			<li>
+				<h2>xml资料</h2>
+
+				<h3>元素(element)</h3>
+				<ul>
+					<li>
+						<h4><a href="http://wowwiki.wikia.com/wiki/XML_elements">frame</a></h4>
+						<p>各属性：</p>
+						<p>movable (bool) - (De)Activates the methods, :StartMoving() and :StopMovingOrSizing(). Default false. </p>
+						<p>clampedToScreen (bool) - Prohibits element to go out of screen. Way applied unknown, probably just moved. </p>
+						<p>setAllPoints (boolean) - Attaches all four corners to the parent's inner corners. </p>
+						<p>
+							我们的可视化元素，是被放进若干个Layer来渲染的，ARTWORK是其中一个Layer，位于背景Layer的上方。也就是说，被放进ARTWORK层的所有元素，都会被渲染在背景层的上方，盖住背景层的一切东西。层的渲染顺序是BACKGROUND，ARTWORK，OVERLAY。如果你想渲染一些东西在最上层，就放进OVERLAY层里。我们现在选择ARTWORK层当作我们Hello World文字的渲染层。
+						</p>
+						<p><a href="http://bbs.ngacn.cc/read.php?tid=2013286&_fp=5">从零开始学做插件</a></p>
+					</li>
+				</ul>
+			</li>
+		</ol>
+
+	</body>
+
+</html>

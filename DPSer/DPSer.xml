@@ -1,0 +1,65 @@
+<Ui>
+
+	<Frame name='displayFrame' parent="UIParent" clampedToScreen='true' toplevel="true" movable="true" userPlaced='true' enableMouse="true">
+		<Size x="200" y="80"/>
+		<Anchors>
+			<Anchor point="CENTER"/>
+		</Anchors>
+
+		<Layers>
+      		<Layer level="ARTWORK">
+      			<!-- 字符显示器 -->
+				<FontString name="$parentText" inherits="GameFontNormal" font=STANDARD_TEXT_FONT justifyV='LEFT' justifyH='TOP' text="Keys You Want To Press.">
+					<Anchors>
+						<Anchor point="TOPLEFT" relativeTo="displayFrame"></Anchor>
+					</Anchors>
+				</FontString>
+
+				<!-- 操作按钮 -->
+				<Button name="$parentF1">
+					<Anchors>
+						<Anchor point="BOTTOMLEFT" relativeTo="displayFrame">
+							<Offset x="0" y="0"/>
+						</Anchor>
+					</Anchors>
+					<Scripts>
+						<OnClick>
+							<!-- 改变按键策略 -->
+						</OnClick>
+					</Scripts>
+				</Button>
+
+			</Layer>
+		</Layers>
+
+		<Scripts>
+			<OnLoad>
+				myFrame = getglobal("displayFrame");
+				myFrame:RegisterEvent("COMBAT_LOG_EVENT_UNFILTERED");
+				myFrame:RegisterEvent("CHAT_MSG_WHISPER");
+				<!-- 为本frame添加一个FontString -->
+				<!-- 为本窗体注册COMBAT_LOG_EVENT_UNFILTERED、CHAT_MSG_WHISPER两个事件监测 -->
+				<!-- this:RegisterEvent("COMBAT_LOG_EVENT_UNFILTERED"); -->
+				<!-- this:RegisterEvent("CHAT_MSG_WHISPER"); -->
+			</OnLoad>
+			<OnDragStart>
+				self.StartMoving()
+			</OnDragStart>
+			<OnDragStop>
+				self.StopMovingOrSizing()
+			</OnDragStop>
+			<!-- <OnEvent function="FooHandler_OnEvent"/> -->
+			<OnEvent>
+				<!-- 添加事件相关代码 -->
+				<!-- checkEvents(self, event, ...)  用event, arg1, arg2来响应 -->
+			</OnEvent>
+			<OnUpdate>
+				<!-- 改变FontString的值 -->
+				<!-- Text:SetText(Cnt) -->
+				<!-- main(self, elapsed) -->
+			</OnUpdate>
+
+		</Scripts>
+	</Frame>
+
+</Ui>
